@@ -23,9 +23,10 @@ for (const s of SPECIES) $("names").append(new Option(label(s)));
 
 /* ---------- scores (only counts are saved, never photos) ---------- */
 const blank = () => ({ top1: 0, top3: 0, ms: 0 });
-const empty = () => ({ n: 0, pyinsect: blank(), clip: blank(), history: [] });
+// list: one entry per scored photo: the right answer and each AI's first guess (never the photo itself).
+const empty = () => ({ n: 0, pyinsect: blank(), clip: blank(), list: [] });
 let scores = empty();
-try { scores = JSON.parse(localStorage.getItem(SCORES_KEY)) || empty(); } catch { /* private window */ }
+try { scores = { ...empty(), ...JSON.parse(localStorage.getItem(SCORES_KEY)) }; } catch { /* private window */ }
 const saveScores = () => { try { localStorage.setItem(SCORES_KEY, JSON.stringify(scores)); } catch { /* not saved */ } };
 
 function showScores() {
@@ -39,7 +40,7 @@ function showScores() {
     ["Right in top 3", (a) => pct(scores[a].top3)],
     ["Time per photo", (a) => (n ? `${(scores[a].ms / n / 1000).toFixed(1)} s` : "–")],
   ]);
-  drawChart();
+  showMarks();
 }
 function fill(id, rows) {
   $(id).replaceChildren(...rows.map(([name, value]) => {
@@ -49,59 +50,33 @@ function fill(id, rows) {
     return tr;
   }));
 }
-// Line graph: after each scored photo, what percent has each AI got right first time so far?
-// Each point in scores.history is [photos scored, Pyinsect right, CLIP right].
-const svg = (tag, attrs, text) => {
-  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
-  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
-  if (text != null) e.textContent = text;
-  return e;
-};
-function drawChart() {
-  const points = scores.history || [];
-  if (!points.length) { $("chart").replaceChildren(el("p", "muted", "Score a photo to see the graph.")); return; }
-  const W = 440, H = 340, left = 48, right = 16, top = 12, bottom = 44;
-  const total = points[points.length - 1][0];
-  // The bottom numbers go from 0 to at least 10 photos, so the line fills the graph as you score more.
-  const step = 2 * Math.max(1, Math.ceil(total / 10)), most = Math.max(10, step * Math.ceil(total / step));
-  const x = (n) => left + (n / most) * (W - left - right);
-  const y = (percent) => top + (1 - percent / 100) * (H - top - bottom);
-  const percent = (point, i) => Math.round((100 * point[i]) / point[0]);
-  const say = (point) => `After ${point[0]} photo${point[0] === 1 ? "" : "s"}: Pyinsect ${percent(point, 1)}%, CLIP ${percent(point, 2)}%`;
-  const end = points[points.length - 1];
-
-  const graph = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `Right first time. ${say(end)}` });
-  // The two axis lines, with a small tick at each number
-  graph.append(svg("path", { class: "axis", d: `M${left} ${top}V${y(0)}H${W - right}` }));
-  for (let p = 0; p <= 100; p += 20) {
-    graph.append(svg("line", { class: "axis", x1: left - 6, x2: left, y1: y(p), y2: y(p) }));
-    graph.append(svg("text", { x: left - 12, y: y(p) + 4, "text-anchor": "end" }, `${p}%`));
-  }
-  for (let n = 0; n <= most; n += step) {
-    graph.append(svg("line", { class: "axis", x1: x(n), x2: x(n), y1: y(0), y2: y(0) + 6 }));
-    graph.append(svg("text", { x: x(n), y: y(0) + 22, "text-anchor": "middle" }, n));
-  }
-  graph.append(svg("text", { x: (left + W - right) / 2, y: H - 4, "text-anchor": "middle" }, "Photos scored"));
-  // Pyinsect is drawn thicker underneath, so it still shows when both lines are in the same place.
-  const many = total > 30;
-  for (const [ai, i, size] of [["pyinsect", 1, 4.5], ["clip", 2, 3]]) {
-    graph.append(svg("polyline", { class: `line ${ai}`, points: points.map((p) => `${x(p[0])},${y(percent(p, i))}`).join(" ") }));
-    for (const p of many ? [end] : points) {
-      graph.append(svg("circle", { class: `dot ${ai}`, cx: x(p[0]), cy: y(percent(p, i)), r: size }));
-    }
-  }
-
-  // Point at (or tap) the graph to read the numbers for one photo.
-  const readout = el("p", "readout muted", say(end));
-  const slot = (W - left - right) / most;
-  for (const p of points) {
-    const hit = svg("rect", { x: x(p[0]) - slot / 2, y: top, width: slot, height: H - top - bottom, fill: "transparent" });
-    hit.append(svg("title", {}, say(p)));
-    hit.addEventListener("pointerenter", () => { readout.textContent = say(p); });
-    hit.addEventListener("click", () => { readout.textContent = say(p); });
-    graph.append(hit);
-  }
-  $("chart").replaceChildren(el("p", "group-title", "Right first time, so far"), graph, readout);
+// The benchmark: a check mark or an X for each AI on each photo. Photos where only one AI was right
+// are shown. Photos where both were right, or both wrong, are folded away.
+function showMarks() {
+  const list = scores.list.map((entry, i) => ({ ...entry, number: i + 1 }));
+  const differ = list.filter((e) => (e.pyinsect === e.truth) !== (e.clip === e.truth));
+  const same = list.filter((e) => !differ.includes(e));
+  fillMarks("differ", differ);
+  fillMarks("same", same);
+  $("differTable").hidden = !differ.length;
+  $("differNone").hidden = differ.length > 0;
+  $("differNone").textContent = list.length ? "No differences yet: both AIs did the same on every photo." : "Score a photo to start.";
+  $("sameBox").hidden = !same.length;
+  $("sameTitle").textContent = `Both right or both wrong (${same.length})`;
+}
+function fillMarks(id, entries) {
+  $(id).replaceChildren(...entries.map((e) => {
+    const tr = el("tr"), th = el("th", null, `${e.number}. ${commonName(e.truth)}`);
+    th.scope = "row";
+    tr.append(th, ...[e.pyinsect, e.clip].map((guess) => {
+      const right = guess === e.truth;
+      const td = el("td", right ? "mark right" : "mark wrong", right ? "✓" : "✗");
+      td.title = right ? "Right" : `Wrong: it said ${commonName(guess)}`;
+      td.setAttribute("aria-label", td.title);
+      return td;
+    }));
+    return tr;
+  }));
 }
 $("reset").onclick = () => {
   if (!confirm("Reset all the scores?")) return;
@@ -303,9 +278,9 @@ function answerRow(card, results) {
       scores[ai].top3 += top3.some((g) => g.species === truth) ? 1 : 0;
       scores[ai].ms += ms;
     }
-    const point = [scores.n, scores.pyinsect.top1, scores.clip.top1];
-    (scores.history ||= []).push(point);
-    card.scored = { point, truth, results };   // so Remove photo can take this score out again
+    const entry = { truth, pyinsect: results.pyinsect.top3[0].species, clip: results.clip.top3[0].species };
+    scores.list.push(entry);
+    card.scored = { entry, truth, results };   // so Remove photo can take this score out again
     saveScores();
     showScores();
     for (const li of card.querySelectorAll("li")) li.classList.toggle("right", li.dataset.species === truth);
@@ -317,25 +292,18 @@ function answerRow(card, results) {
   card.append(note, row);
 }
 
-// Takes a scored photo back out of the totals and the graph.
-function unscore({ point, truth, results }) {
-  const at = (scores.history || []).indexOf(point);
+// Takes a scored photo back out of the totals and the list.
+function unscore({ entry, truth, results }) {
+  const at = scores.list.indexOf(entry);
   if (at < 0) return;   // the scores were reset after this photo
-  const had = {};
   scores.n--;
   for (const ai of ["pyinsect", "clip"]) {
     const { top3, ms } = results[ai];
-    had[ai] = top3[0].species === truth ? 1 : 0;
-    scores[ai].top1 -= had[ai];
+    scores[ai].top1 -= top3[0].species === truth ? 1 : 0;
     scores[ai].top3 -= top3.some((g) => g.species === truth) ? 1 : 0;
     scores[ai].ms -= ms;
   }
-  for (const later of scores.history.slice(at + 1)) {
-    later[0]--;
-    later[1] -= had.pyinsect;
-    later[2] -= had.clip;
-  }
-  scores.history.splice(at, 1);
+  scores.list.splice(at, 1);
   saveScores();
   showScores();
 }

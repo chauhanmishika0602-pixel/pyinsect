@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="../assets/site.css?v=20261120a">
-<link rel="stylesheet" href="benchmark.css?v=10">
+<link rel="stylesheet" href="benchmark.css?v=11">
 </head>
 <body>
 <header class="topbar">
@@ -26,11 +26,18 @@
 
   <section class="panel" aria-labelledby="scoreTitle">
     <h2 id="scoreTitle">Scores</h2>
-    <ul class="legend">
-      <li><span class="swatch pyinsect"></span>Pyinsect</li>
-      <li><span class="swatch clip"></span>CLIP</li>
-    </ul>
-    <div id="chart" class="chart"></div>
+    <table id="differTable" class="marks">
+      <thead><tr><th scope="col">Photo</th><th scope="col">Pyinsect</th><th scope="col">CLIP</th></tr></thead>
+      <tbody id="differ"></tbody>
+    </table>
+    <p id="differNone" class="muted"></p>
+    <details id="sameBox">
+      <summary id="sameTitle">Both right or both wrong</summary>
+      <table class="marks">
+        <thead><tr><th scope="col">Photo</th><th scope="col">Pyinsect</th><th scope="col">CLIP</th></tr></thead>
+        <tbody id="same"></tbody>
+      </table>
+    </details>
     <div class="table-box">
       <table>
         <thead><tr><th></th><th scope="col">Pyinsect</th><th scope="col">CLIP</th></tr></thead>
@@ -70,6 +77,6 @@
 <script src="../assets/insect-finder.js?v=20261028a"></script>
 <script src="../assets/species.js?v=20261028a"></script>
 <script src="../assets/models/pyinsect-2.8-oregon.js?v=20261118a"></script>
-<script type="module" src="benchmark.js?v=10"></script>
+<script type="module" src="benchmark.js?v=11"></script>
 </body>
 </html>
