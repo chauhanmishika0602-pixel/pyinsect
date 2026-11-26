@@ -983,3 +983,31 @@ To add one, ask your AI helper to help you plan a new feature. It will use
   - [x] Picking CLIP and a photo shows guesses from Pyinsect and CLIP.
   - [x] A wrong key shows "That key didn't work" and the app stays closed.
   - [ ] With a good key, a photo shows guesses from Pyinsect and OpenRouter.
+
+## Data Collector: color filters
+
+- **Status:** Building
+- **Asked by:** Mishika, 2026-11-26
+- **Who it's for:** Our team, when we collect insect photos for training the AI.
+- **Problem or need:** All our training photos are taken in the same light on the turntable, but people
+  take their photos outside at dawn, at dusk, in the afternoon, on sunny days and on cloudy days.
+- **Why they have it:** The light changes the colors in a photo, so the AI may not know a bug it has only
+  seen in turntable light.
+- **Our idea:** After the photos are taken and zoomed, a random few of them (10–30%) get a color filter:
+  dawn, sunny, afternoon, cloudy, shade or dusk, at a random strength. The filter's name goes in the file
+  name (instead of `nofilter`) and in `labels.csv`. The zoom, the lighting and when the photos are taken
+  don't change. The filters use the canvas's own fast tools (brightness, contrast, saturation and a color
+  tint), not code that changes one pixel at a time, and the step always stops in under a second.
+- **Other ideas we talked about:**
+  - Filter every photo: too slow on a phone, and we still want photos without a filter.
+  - Keep the photo and add a filtered copy: more photos to send, and more time.
+- **User flow:**
+  1. Type the name and press Start, like before.
+  2. The photos are taken and zoomed in on the bug, like before.
+  3. "Adding color filters…" shows for less than a second.
+  4. The photos are sent. Some file names say `dawn`, `dusk`, `cloudy`… instead of `nofilter`.
+- **Done when:**
+  - [ ] Some of the photos in the zip look like dawn, dusk, a sunny day or a cloudy day, and their file
+    names and `labels.csv` say which filter they got.
+  - [ ] Adding the filters takes less than a second for 50 photos on a phone like a Samsung A42 5G.
+  - [ ] The zoom, the lighting and the photo timing work the same as before.

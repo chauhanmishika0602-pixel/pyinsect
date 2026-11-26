@@ -45,11 +45,29 @@ const SCREEN_LIGHTS = [
 // frames (so it's right at 30 and 60 fps); the ms values are the fallback without frame timing.
 const LEVEL_SETTLE_FRAMES = 5, LIGHT_SETTLE_MS = 150;  // new exposure level (or screen colour)
 const TORCH_SETTLE_FRAMES = 2, TORCH_SETTLE_MS = 70;   // flashlight on/off only
+
+// Color filters: after the photos are taken and zoomed, a few of them (picked at random) get a color
+// filter that makes them look like a photo someone took outside at dawn, at dusk, on a cloudy day...
+// People send us photos like that, so the AI should learn from them too. To be fast, a filter is only:
+//   look: brightness, contrast and saturation (1 = no change), done while the photo is drawn
+//   tint: a color the photo is multiplied by, like the color of the light (white = no change)
+//   glow: light from one side, picked at random: [blend mode, color on the light's side, color on the far side]
+const COLOR_FILTERS = [
+  { id: 'dawn',      look: { brightness: 0.82, contrast: 0.88, saturate: 0.7 },  tint: '#c3c8ee', glow: ['screen', '#5c2c40', '#000000'] },
+  { id: 'sunny',     look: { brightness: 1.12, contrast: 1.15, saturate: 1.25 }, tint: '#fff2d6' },
+  { id: 'afternoon', look: { brightness: 1.03, contrast: 1.03, saturate: 1.05 }, tint: '#ffeed8', glow: ['screen', '#2e2008', '#000000'] },
+  { id: 'cloudy',    look: { brightness: 0.92, contrast: 0.85, saturate: 0.6 },  tint: '#dde3ea' },
+  { id: 'shade',     look: { brightness: 0.88, contrast: 0.95, saturate: 0.85 }, tint: '#bfd0ee' },
+  { id: 'dusk',      look: { brightness: 0.78, contrast: 0.95, saturate: 0.9 },  glow: ['multiply', '#ffb27a', '#8a78b8'] },
+];
+const FILTER_SHARE = [0.1, 0.3];  // filter a random 10–30% of the photos (5 to 15 of 50)
+const FILTER_STRENGTH = [0.6, 1]; // each filtered photo gets a random strength, so no two look the same
+const FILTER_TIME_MS = 900;       // the whole step stops before this, even on a slow phone
 let zoom = 1;                 // how much the preview is zoomed in
 let aim = { x: 0.5, y: 0.5 }; // the spot in the preview that the zoom shows
 
 const state = {
-  photos: [],          // { blob, angle, light, flash (0 or 100 %), time }
+  photos: [],          // { blob, angle, light, flash (0 or 100 %), time, filter (only if it got one) }
   stream: null,
   track: null,
   caps: {},
@@ -579,6 +597,75 @@ async function zoomPhotos(photos) {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Color filters: dawn, dusk, cloudy... on a few random photos         */
+/* ------------------------------------------------------------------ */
+const between = ([lo, hi]) => lo + Math.random() * (hi - lo);
+
+// Draws the photo on the canvas with one filter. strength 0 = no change, 1 = the full filter.
+function paintFilter(ctx, img, w, h, filter, strength) {
+  const mix = (v = 1) => +(1 + (v - 1) * strength).toFixed(3);
+  const { brightness, contrast, saturate } = filter.look;
+  ctx.filter = `brightness(${mix(brightness)}) contrast(${mix(contrast)}) saturate(${mix(saturate)})`;
+  ctx.drawImage(img, 0, 0, w, h);
+  ctx.filter = 'none';
+  ctx.globalAlpha = strength;
+  if (filter.tint) {
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = filter.tint;
+    ctx.fillRect(0, 0, w, h);
+  }
+  if (filter.glow) {
+    const [mode, from, to] = filter.glow;
+    const turn = Math.random() * 2 * Math.PI;   // the side the light comes from
+    const dx = (Math.cos(turn) * w) / 2, dy = (Math.sin(turn) * h) / 2;
+    const g = ctx.createLinearGradient(w / 2 - dx, h / 2 - dy, w / 2 + dx, h / 2 + dy);
+    g.addColorStop(0, from);
+    g.addColorStop(1, to);
+    ctx.globalCompositeOperation = mode;
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  }
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+}
+
+// After the burst and the zoom: gives a random few photos a random filter. Photos are picked in a random
+// order, so if a slow phone runs out of time, the ones left without a filter are random too.
+async function colorFilterPhotos(photos) {
+  if (state.abort || !photos.length) return;
+  const order = photos.map((_, i) => i);
+  for (let i = order.length - 1; i > 0; i--) {   // shuffle
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  const picked = order.slice(0, Math.round(photos.length * between(FILTER_SHARE)));
+  hud('Adding color filters…');
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const t0 = performance.now();
+  let slowest = 0;   // the longest one photo has taken so far
+  for (const i of picked) {
+    const start = performance.now();
+    // Stop if the next photo might not be done in time (it could take as long as the slowest one so far).
+    if (state.abort || start + slowest - t0 > FILTER_TIME_MS) break;
+    const photo = photos[i];
+    const filter = COLOR_FILTERS[Math.floor(Math.random() * COLOR_FILTERS.length)];
+    try {
+      const img = await createImageBitmap(photo.blob);
+      if (canvas.width !== img.width || canvas.height !== img.height) {
+        canvas.width = img.width;
+        canvas.height = img.height;
+      }
+      paintFilter(ctx, img, canvas.width, canvas.height, filter, between(FILTER_STRENGTH));
+      img.close();
+      const blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
+      if (blob) { photo.blob = blob; photo.filter = filter.id; }
+    } catch (err) { console.warn('color filter:', err); }
+    slowest = Math.max(slowest, performance.now() - start);
+  }
+}
+
 // Gives the browser a turn without waiting a whole timer tick (setTimeout(0) can take 4 ms or more).
 function yieldNow() {
   return new Promise(resolve => { const c = new MessageChannel(); c.port1.onmessage = () => resolve(); c.port2.postMessage(0); });
@@ -803,6 +890,7 @@ async function runCapture() {
       }
     }
     await zoomPhotos(state.photos);
+    await colorFilterPhotos(state.photos);
   } catch (err) {
     if (!state.abort) toast(err.message || String(err), 6000);
   } finally {
@@ -834,11 +922,12 @@ function stamp(d) {
   const p = n => String(n).padStart(2, '0');
   return `${d.getFullYear()}_${p(d.getMonth() + 1)}_${p(d.getDate())}_${p(d.getHours())}_${p(d.getMinutes())}_${p(d.getSeconds())}`;
 }
-// Photo file: <insect_name>_top_nofilter_<flash_intensity_percentage>_<photo_serial_number>_yyyy_mm_dd_hh_mm_ss.jpg
-// The flashlight is either on (100) or off (0). width = digits in the serial number, so 1000 photos still sort in order.
+// Photo file: <insect_name>_top_<filter>_<flash_intensity_percentage>_<photo_serial_number>_yyyy_mm_dd_hh_mm_ss.jpg
+// filter = "nofilter", or the color filter's id, like "dusk". The flashlight is either on (100) or off (0).
+// width = digits in the serial number, so 1000 photos still sort in order.
 function fileNameFor(insect, p, i, width = Math.max(3, String(state.photos.length).length)) {
   const n = String(i + 1).padStart(width, '0');
-  return `${insect}_top_nofilter_${p.flash}_${n}_${stamp(p.time)}.jpg`;
+  return `${insect}_top_${p.filter || 'nofilter'}_${p.flash}_${n}_${stamp(p.time)}.jpg`;
 }
 // Folder (and .zip): <insect_name>_yyyy_mm_dd_hh_mm_ss, the time of the first photo
 function folderFor(insect, photos) {
@@ -851,11 +940,12 @@ async function buildZip() {
   if (state.zipBlob) return { blob: state.zipBlob, folder };
   const zip = new JSZip();
   const dir = zip.folder(folder);
-  const rows = [['file', 'insect', 'angle_deg', 'lighting', 'flash_pct', 'captured_at']];
+  // The new "filter" column goes last, so anything that reads the columns by position still works.
+  const rows = [['file', 'insect', 'angle_deg', 'lighting', 'flash_pct', 'captured_at', 'filter']];
   state.photos.forEach((p, i) => {
     const name = fileNameFor(state.name, p, i);
     dir.file(name, p.blob);
-    rows.push([name, state.name, p.angle, p.light, p.flash, p.time.toISOString()]);
+    rows.push([name, state.name, p.angle, p.light, p.flash, p.time.toISOString(), p.filter || 'nofilter']);
   });
   dir.file('labels.csv', rows.map(r => r.join(',')).join('\n') + '\n');
   state.zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
